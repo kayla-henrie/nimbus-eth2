@@ -1,0 +1,177 @@
+pipeline {
+  /* This way we run the same Jenkinsfile on different platforms. */
+  agent { label params.AGENT_LABEL }
+
+  parameters {
+    string(
+      name: 'AGENT_LABEL',
+      description: 'Label for targetted CI slave host: linux/macos',
+      defaultValue: params.AGENT_LABEL ?: getAgentLabel(),
+    )
+  }
+
+  options {
+    timestamps()
+    /* This also includes wait time in the queue. */
+    timeout(time: 24, unit: 'HOURS')
+    /* Limit builds retained. */
+    buildDiscarder(logRotator(
+      numToKeepStr: '5',
+      daysToKeepStr: '30',
+      artifactNumToKeepStr: '3',
+    ))
+    /* Throttle number of concurrent builds. */
+    throttleJobProperty(
+      categories: ['nimbus-eth2'],
+      throttleEnabled: true,
+      throttleOption: 'category'
+    )
+    /* Abort old builds for non-main branches. */
+    disableConcurrentBuilds(
+      abortPrevious: !isMainBranch()
+    )
+  }
+
+  environment {
+    NPROC = Runtime.getRuntime().availableProcessors()
+    MAKEFLAGS = "-j${env.NPROC}"
+  }
+
+  stages {
+    stage('Deps') {
+      steps { timeout(20) {
+        /* To allow the following parallel stages. */
+        sh 'make QUICK_AND_DIRTY_COMPILER=1 update'
+        /* Allow the following parallel stages. */
+        sh 'make deps'
+        /* Download test vectors. */
+        sh './scripts/setup_scenarios.sh'
+      } }
+    }
+
+    stage('Build') {
+      steps { timeout(30) {
+        sh 'make LOG_LEVEL=TRACE'
+      } }
+    }
+
+    stage('Tests') {
+      parallel {
+        stage('General') {
+          steps { timeout(60) {
+            sh 'make DISABLE_TEST_FIXTURES_SCRIPT=1 test'
+          } }
+        }
+
+        stage('REST') {
+          steps { timeout(5) {
+            sh 'make restapi-test'
+          } }
+        }
+      }
+    }
+
+    stage('Finalizations') {
+      /* TODO: Try in parallel. */
+      stages {
+        stage('testnet0') {
+          steps { script { timeout(15) {
+              launchLocalTestnet(
+                dataDir: 'local_testnet0_data',
+                preset: 'minimal',
+                timeout: 10 * 60
+              )
+          } } }
+        }
+
+        stage('testnet1') {
+          steps { script { timeout(45) {
+              launchLocalTestnet(
+                dataDir: 'local_testnet1_data',
+                preset: 'mainnet',
+                timeout: 40 * 60
+              )
+          } } }
+        }
+      }
+    }
+
+    stage('Upload') {
+      steps { timeout(5) {
+        archiveArtifacts('*.tar.bz2')
+      } }
+    }
+  }
+
+  post {
+    always {
+      cleanWs(
+        disableDeferredWipeout: true,
+        deleteDirs: true
+      )
+    }
+  }
+}
+
+def launchLocalTestnet(Map opts = [:]) {
+  def defaults = [
+    preset: 'mainnet',
+    nodes: 4,
+    lightClients: 1,
+    stopAtEpoch: 5,
+    dataDir: 'local_testnet_data',
+    logLevel: 'INFO',
+    timeout: 600,
+    /* EXECUTOR_NUMBER will be 0 or 1, since we have 2 executors per node */
+    listenPort: 9000 + (env.EXECUTOR_NUMBER.toInteger() * 100),
+    metricsPort: 8008 + (env.EXECUTOR_NUMBER.toInteger() * 100),
+    restPort: 7000 + (env.EXECUTOR_NUMBER.toInteger() * 100),
+  ]
+  /* merge defaults with received opts */
+  opts = defaults + opts
+  def flags = [
+    "--preset ${opts.preset}",
+    "--nodes ${opts.nodes}",
+    "--light-clients ${opts.lightClients}",
+    "--stop-at-epoch ${opts.stopAtEpoch}",
+    "--data-dir ${opts.dataDir}",
+    "--timeout ${opts.timeout}",
+    "--log-level ${opts.logLevel}",
+    "--base-port ${opts.listenPort}",
+    "--base-metrics-port ${opts.metricsPort}",
+    "--base-rest-port ${opts.restPort}",
+    "--disable-htop",
+    "--enable-logtrace",
+    "--kill-old-processes",
+    "-- --verify-finalization --discv5:no",
+  ]
+  /* We want to mark job as failed, but save the results. */
+  catchError(
+    message: 'Testnet1 finalization failure!',
+    buildResult: 'FAILURE',
+    stageResult: 'FAILURE'
+  ) {
+    sh "./scripts/launch_local_testnet.sh ${flags.join(' ')}"
+  }
+  /* Archive test results regardless of outcome. */
+  sh "tar cjf ${opts.dataDir}.tar.bz2 ${opts.dataDir}/*.txt"
+}
+
+def isMainBranch() {
+  return ['stable', 'testing', 'unstable'].contains(env.BRANCH_NAME)
+}
+
+/* This allows us to use one Jenkinsfile and run
+ * jobs on different platforms based on job name. */
+def getAgentLabel() {
+    if (params.AGENT_LABEL) { return params.AGENT_LABEL }
+    /* We extract the name of the job from currentThread because
+     * before an agent is picket env is not available. */
+    def tokens = Thread.currentThread().getName().split('/')
+    def labels = []
+    /* Check if the job path contains any of the valid labels. */
+    ['linux', 'macos', 'x86_64', 'aarch64', 'arm64'].each {
+        if (tokens.contains(it)) { labels.add(it) }
+    }
+    return labels.join(' && ')
+}
