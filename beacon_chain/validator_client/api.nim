@@ -216,7 +216,8 @@ proc getSyncCommitteeDuties*(
        validators: seq[ValidatorIndex]
      ): Future[GetSyncCommitteeDutiesResponse] {.async.} =
   logScope: request = "getSyncCommitteeDuties"
-  vc.firstSuccessTimeout(RestResponse[GetSyncCommitteeDutiesResponse], SlotDuration,
+  vc.firstSuccessTimeout(RestResponse[GetSyncCommitteeDutiesResponse],
+                         SlotDuration,
                          getSyncCommitteeDuties(it, epoch, validators)):
     if apiResponse.isErr():
       debug "Unable to retrieve sync committee duties", endpoint = node,
@@ -466,7 +467,8 @@ proc submitPoolSyncCommitteeSignature*(
       let response = apiResponse.get()
       case response.status
       of 200:
-        debug "Sync committee message was successfully published", endpoint = node
+        debug "Sync committee message was successfully published",
+              endpoint = node
         return true
       of 400:
         debug "Received invalid request response",
@@ -484,7 +486,8 @@ proc submitPoolSyncCommitteeSignature*(
               response_error = response.getDutyErrorMessage()
         RestBeaconNodeStatus.Offline
 
-  raise newException(ValidatorApiError, "Unable to submit sync committee message")
+  raise newException(ValidatorApiError,
+                     "Unable to submit sync committee message")
 
 proc getAggregatedAttestation*(
        vc: ValidatorClientRef,
@@ -805,3 +808,46 @@ proc prepareSyncCommitteeSubnets*(
 
   raise newException(ValidatorApiError,
                      "Unable to prepare sync committee subnet")
+
+proc getValidatorsActivity*(
+       vc: ValidatorClientRef, epoch: Epoch,
+       data: seq[ValidatorIndex]
+     ): Future[GetValidatorsActivityResponse] {.async.} =
+  logScope: request = "getValidatorsActivity"
+  vc.firstSuccessTimeout(RestPlainResponse, OneThirdDuration,
+                         getValidatorsActivity(it, epoch, data)):
+    if apiResponse.isErr():
+      debug "Unable to retrieve validators activity data", endpoint = node,
+            error = apiResponse.error()
+      RestBeaconNodeStatus.Offline
+    else:
+      let response = apiResponse.get()
+      case response.status
+      of 200:
+        let res = decodeBytes(GetValidatorsActivityResponse, response.data,
+                              response.contentType)
+        if res.isOk():
+          debug "Received successful response", endpoint = node
+          return res.get()
+        else:
+          debug "Received invalid/incomplete response", endpoint = node,
+                error_message = res.error()
+          RestBeaconNodeStatus.Incompatible
+      of 400:
+        debug "Received invalid request response",
+              response_code = response.status, endpoint = node,
+              response_error = response.getGenericErrorMessage()
+        RestBeaconNodeStatus.Incompatible
+      of 500:
+        debug "Received internal error response",
+              response_code = response.status, endpoint = node,
+              response_error = response.getGenericErrorMessage()
+        RestBeaconNodeStatus.Offline
+      else:
+        debug "Received unexpected error response",
+              response_code = response.status, endpoint = node,
+              response_error = response.getGenericErrorMessage()
+        RestBeaconNodeStatus.Offline
+
+  raise newException(ValidatorApiError,
+                     "Unable to retrieve validators activity data")
