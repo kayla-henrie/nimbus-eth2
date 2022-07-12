@@ -1,6 +1,9 @@
 import common
 
-logScope: service = "fallback_service"
+const
+  ServiceName = "fallback_service"
+
+logScope: service = ServiceName
 
 type
   BeaconNodesCounters* = object
@@ -275,10 +278,11 @@ proc mainLoop(service: FallbackServiceRef) {.async.} =
 
 proc init*(t: typedesc[FallbackServiceRef],
            vc: ValidatorClientRef): Future[FallbackServiceRef] {.async.} =
-  debug "Initializing service"
-  var res = FallbackServiceRef(name: "fallback_service", client: vc,
+  logScope: service = ServiceName
+  var res = FallbackServiceRef(name: ServiceName, client: vc,
                                state: ServiceState.Initialized,
                                onlineEvent: newAsyncEvent())
+  debug "Initializing service"
   # Perform initial nodes check.
   await res.checkNodes()
   return res

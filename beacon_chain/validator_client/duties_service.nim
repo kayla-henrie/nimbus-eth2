@@ -2,7 +2,10 @@ import std/[sets, sequtils]
 import chronicles
 import common, api, block_service
 
-logScope: service = "duties_service"
+const
+  ServiceName = "duties_service"
+
+logScope: service = ServiceName
 
 type
   DutiesServiceLoop* = enum
@@ -547,7 +550,8 @@ proc mainLoop(service: DutiesServiceRef) {.async.} =
 
 proc init*(t: typedesc[DutiesServiceRef],
            vc: ValidatorClientRef): Future[DutiesServiceRef] {.async.} =
-  let res = DutiesServiceRef(name: "duties_service",
+  logScope: service = ServiceName
+  let res = DutiesServiceRef(name: ServiceName,
                              client: vc, state: ServiceState.Initialized)
   debug "Initializing service"
   # We query for indices first, to avoid empty queries for duties.

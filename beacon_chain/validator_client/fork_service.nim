@@ -2,7 +2,10 @@ import std/algorithm
 import chronicles
 import common, api
 
-logScope: service = "fork_service"
+const
+  ServiceName = "fork_service"
+
+logScope: service = ServiceName
 
 proc validateForkSchedule(forks: openArray[Fork]): bool {.raises: [Defect].} =
   # Check if `forks` list is linked list.
@@ -96,9 +99,10 @@ proc mainLoop(service: ForkServiceRef) {.async.} =
 
 proc init*(t: typedesc[ForkServiceRef],
             vc: ValidatorClientRef): Future[ForkServiceRef] {.async.} =
-  debug "Initializing service"
-  let res = ForkServiceRef(name: "fork_service",
+  logScope: service = ServiceName
+  let res = ForkServiceRef(name: ServiceName,
                            client: vc, state: ServiceState.Initialized)
+  debug "Initializing service"
   await vc.pollForFork()
   return res
 

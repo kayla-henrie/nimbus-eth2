@@ -9,7 +9,10 @@ import std/sets
 import chronicles
 import "."/[common, api, block_service]
 
-logScope: service = "attestation_service"
+const
+  ServiceName = "attestation_service"
+
+logScope: service = ServiceName
 
 type
   AggregateItem* = object
@@ -428,9 +431,10 @@ proc mainLoop(service: AttestationServiceRef) {.async.} =
 
 proc init*(t: typedesc[AttestationServiceRef],
            vc: ValidatorClientRef): Future[AttestationServiceRef] {.async.} =
-  debug "Initializing service"
-  let res = AttestationServiceRef(name: "attestation_service",
+  logScope: service = ServiceName
+  let res = AttestationServiceRef(name: ServiceName,
                                   client: vc, state: ServiceState.Initialized)
+  debug "Initializing service"
   return res
 
 proc start*(service: AttestationServiceRef) =
