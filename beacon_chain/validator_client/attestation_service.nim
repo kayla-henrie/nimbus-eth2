@@ -28,6 +28,15 @@ proc serveAttestation(service: AttestationServiceRef, adata: AttestationData,
       res.get()
   let fork = vc.forkAtEpoch(adata.slot.epoch)
 
+  doAssert(validator.index.isSome())
+  let vindex = validator.index.get()
+
+  if not vc.doppelgangerCheck(vindex):
+    info "Attestation has not been served (doppelganger check still active)",
+         slot = duty.data.slot, validator = shortLog(validator),
+         validator_index = vindex
+    return false
+
   # TODO: signing_root is recomputed in getAttestationSignature just after,
   # but not for locally attached validators.
   let signingRoot =
@@ -35,7 +44,6 @@ proc serveAttestation(service: AttestationServiceRef, adata: AttestationData,
       fork, vc.beaconGenesis.genesis_validators_root, adata)
   let attestationRoot = adata.hash_tree_root()
 
-  let vindex = validator.index.get()
   let notSlashable = vc.attachedValidators.slashingProtection
                        .registerAttestation(vindex, validator.pubkey,
                                             adata.source.epoch,
@@ -109,7 +117,15 @@ proc serveAggregateAndProof*(service: AttestationServiceRef,
     vc = service.client
     genesisRoot = vc.beaconGenesis.genesis_validators_root
     slot = proof.aggregate.data.slot
+    vindex = validator.index.get()
     fork = vc.forkAtEpoch(slot.epoch)
+
+  if not vc.doppelgangerCheck(vindex):
+    info "Aggregate attestation has not been served " &
+         "(doppelganger check still active)",
+         slot = slot, validator = shortLog(validator),
+         validator_index = vindex
+    return false
 
   debug "Signing aggregate", validator = shortLog(validator),
          attestation = shortLog(proof.aggregate), fork = fork
@@ -127,8 +143,6 @@ proc serveAggregateAndProof*(service: AttestationServiceRef,
       res.get()
   let signedProof = SignedAggregateAndProof(message: proof,
                                             signature: signature)
-
-  let vindex = validator.index.get()
 
   debug "Sending aggregated attestation", fork = fork,
         attestation = shortLog(signedProof.message.aggregate),
