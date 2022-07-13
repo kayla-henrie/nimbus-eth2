@@ -33,10 +33,10 @@ template onceToAll*(vc: ValidatorClientRef, responseType: typedesc,
   let onlineNodes =
     try:
       await vc.waitOnlineNodes(timerFut)
-      vc.beaconNodes.filterIt(it.status == RestBeaconNodeStatus.Online)
+      vc.onlineNodes()
     except CancelledError:
       var default: seq[BeaconNodeServerRef]
-      if not(timerFut.finished()):
+      if not(isNil(timerFut)) and not(timerFut.finished()):
         await timerFut.cancelAndWait()
       default
     except CatchableError:
@@ -152,7 +152,24 @@ template firstSuccessTimeout*(vc: ValidatorClientRef, respType: typedesc,
   var iterationsCount = 0
 
   while true:
-    let onlineNodes = vc.onlineNodes()
+    let onlineNodes =
+      try:
+        await vc.waitOnlineNodes(timerFut)
+        vc.onlineNodes()
+      except CancelledError:
+        var default: seq[BeaconNodeServerRef]
+        if not(isNil(timerFut)) and not(timerFut.finished()):
+          await timerFut.cancelAndWait()
+        default
+      except CatchableError:
+        # This case could not be happened.
+        var default: seq[BeaconNodeServerRef]
+        default
+
+    if len(onlineNodes) == 0:
+      # `onlineNodes` sequence is empty only if operation was cancelled or
+      # timeout exceeded.
+      break
 
     if iterationsCount != 0:
       debug "Request got failed", iterations_count = iterationsCount
@@ -238,8 +255,6 @@ template firstSuccessTimeout*(vc: ValidatorClientRef, respType: typedesc,
 
     if exitNow:
       break
-
-    await vc.waitOnlineNodes()
 
 proc getDutyErrorMessage(response: RestPlainResponse): string =
   let res = decodeBytes(RestDutyError, response.data,
